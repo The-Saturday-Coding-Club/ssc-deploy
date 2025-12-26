@@ -14,6 +14,7 @@ applications:
             - echo "AUTH_GITHUB_SECRET=$AUTH_GITHUB_SECRET" >> .env.production
             - echo "AUTH_SECRET=$AUTH_SECRET" >> .env.production
             - echo "AUTH_TRUST_HOST=true" >> .env.production
+            - echo "AUTH_URL=https://main.d2xqpwtnyr0vsm.amplifyapp.com" >> .env.production
             - echo "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" >> .env.production
             - echo "ALLOWED_GITHUB_IDS=$ALLOWED_GITHUB_IDS" >> .env.production
             - npm run build
