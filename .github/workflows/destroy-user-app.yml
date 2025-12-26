@@ -1,0 +1,52 @@
+name: Destroy User App
+on:
+  workflow_dispatch:
+    inputs:
+      app_id:
+        description: 'ID of the application to destroy'
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_DEPLOYER_ROLE_NAME || 'github-actions-deployer' }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infra/terraform/app-plane
+        run: |
+          terraform init \
+            -backend-config="key=app-plane/${{ inputs.app_id }}/terraform.tfstate"
+
+      - name: Terraform Destroy
+        working-directory: infra/terraform/app-plane
+        env:
+          TF_VAR_app_id: ${{ inputs.app_id }}
+          TF_VAR_lambda_zip_path: dummy.zip
+        run: |
+          # Create dummy zip since Terraform requires the variable
+          touch dummy.zip
+          terraform destroy -auto-approve
+
+      - name: Clean up Terraform state from S3
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET || 'cloud-deployer-tf-state' }}
+        run: |
+          echo "Cleaning up Terraform state file..."
+          aws s3 rm "s3://${TF_STATE_BUCKET}/app-plane/${{ inputs.app_id }}/terraform.tfstate"
+          aws s3 rm "s3://${TF_STATE_BUCKET}/app-plane/${{ inputs.app_id }}/" --recursive || true
+          echo "State cleanup complete."

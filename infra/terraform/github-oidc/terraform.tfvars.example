@@ -1,0 +1,8 @@
+# Copy this file to terraform.tfvars and fill in your values
+# terraform.tfvars is gitignored so your values stay local
+
+github_org  = "your-github-username-or-org"
+github_repo = "Your-Self-Service-Cloud-Deployment"
+
+# Optional: restrict to specific branch (default is dev)
+# github_ref = "ref:refs/heads/main"

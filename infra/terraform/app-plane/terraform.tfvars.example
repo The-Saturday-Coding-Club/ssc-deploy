@@ -1,0 +1,15 @@
+# App-Plane Terraform Variables
+# These are typically passed from GitHub Actions workflows
+# Copy this file to terraform.tfvars only for local testing
+
+# AWS Region
+aws_region = "eu-west-1"
+
+# App ID (UUID from database)
+app_id = "your-app-uuid"
+
+# Path to the Lambda deployment zip file
+lambda_zip_path = "../../../app.zip"
+
+# Environment variables for the Lambda function (optional)
+environment_vars = {}

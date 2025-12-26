@@ -1,0 +1,13 @@
+{
+  "name": "cloud-deployer-api",
+  "version": "1.0.0",
+  "description": "Control Plane API for Self-Service Cloud Deployment",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@octokit/rest": "^20.1.2",
+    "pg": "^8.16.3"
+  }
+}

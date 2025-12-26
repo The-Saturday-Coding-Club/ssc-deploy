@@ -1,0 +1,147 @@
+name: Cleanup Orphaned AWS Resources
+
+on:
+  schedule:
+    # Run daily at 3:00 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    # Allow manual trigger
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_DEPLOYER_ROLE_NAME || 'github-actions-deployer' }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Fetch valid app IDs from database
+        id: db
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "Fetching valid app IDs from database..."
+          VALID_IDS=$(psql "$DATABASE_URL" -t -c "SELECT id FROM apps;" 2>/dev/null | tr -d ' ' | grep -v '^$' | sort || echo "")
+          echo "valid_ids<<EOF" >> $GITHUB_OUTPUT
+          echo "$VALID_IDS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "Found $(echo "$VALID_IDS" | grep -c . || echo 0) valid apps in database"
+
+      - name: Find and cleanup orphaned Lambda functions
+        env:
+          VALID_IDS: ${{ steps.db.outputs.valid_ids }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+        run: |
+          echo "=== Checking Lambda Functions ==="
+          LAMBDAS=$(aws lambda list-functions --region $AWS_REGION --query "Functions[?starts_with(FunctionName, 'user-app-')].FunctionName" --output text)
+
+          for lambda in $LAMBDAS; do
+            app_id=${lambda#user-app-}
+            if echo "$VALID_IDS" | grep -q "^$app_id$"; then
+              echo "OK: $lambda"
+            else
+              echo "ORPHANED: $lambda - Deleting..."
+              aws lambda delete-function --region $AWS_REGION --function-name "$lambda" || echo "  Failed to delete"
+            fi
+          done
+
+      - name: Find and cleanup orphaned API Gateways
+        env:
+          VALID_IDS: ${{ steps.db.outputs.valid_ids }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+        run: |
+          echo "=== Checking API Gateways ==="
+          aws apigatewayv2 get-apis --region $AWS_REGION --query "Items[?starts_with(Name, 'user-app-api-')].{Name:Name,Id:ApiId}" --output text | while read -r name api_id; do
+            if [ -n "$name" ]; then
+              app_id=${name#user-app-api-}
+              if echo "$VALID_IDS" | grep -q "^$app_id$"; then
+                echo "OK: $name"
+              else
+                echo "ORPHANED: $name ($api_id) - Deleting..."
+                aws apigatewayv2 delete-api --region $AWS_REGION --api-id "$api_id" || echo "  Failed to delete"
+              fi
+            fi
+          done
+
+      - name: Find and cleanup orphaned IAM Roles
+        env:
+          VALID_IDS: ${{ steps.db.outputs.valid_ids }}
+        run: |
+          echo "=== Checking IAM Roles ==="
+          ROLES=$(aws iam list-roles --query "Roles[?starts_with(RoleName, 'user-app-role-')].RoleName" --output text)
+
+          for role in $ROLES; do
+            app_id=${role#user-app-role-}
+            if echo "$VALID_IDS" | grep -q "^$app_id$"; then
+              echo "OK: $role"
+            else
+              echo "ORPHANED: $role - Deleting..."
+              # Detach managed policies
+              policies=$(aws iam list-attached-role-policies --role-name "$role" --query "AttachedPolicies[].PolicyArn" --output text 2>/dev/null || echo "")
+              for policy in $policies; do
+                aws iam detach-role-policy --role-name "$role" --policy-arn "$policy" || true
+              done
+              # Delete inline policies
+              inline_policies=$(aws iam list-role-policies --role-name "$role" --query "PolicyNames[]" --output text 2>/dev/null || echo "")
+              for policy in $inline_policies; do
+                aws iam delete-role-policy --role-name "$role" --policy-name "$policy" || true
+              done
+              # Delete the role
+              aws iam delete-role --role-name "$role" || echo "  Failed to delete"
+            fi
+          done
+
+      - name: Find and cleanup orphaned CloudWatch Log Groups
+        env:
+          VALID_IDS: ${{ steps.db.outputs.valid_ids }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+        run: |
+          echo "=== Checking CloudWatch Log Groups ==="
+          LOG_GROUPS=$(aws logs describe-log-groups --region $AWS_REGION --log-group-name-prefix "/aws/lambda/user-app-" --query "logGroups[].logGroupName" --output text)
+
+          for log_group in $LOG_GROUPS; do
+            app_id=${log_group#/aws/lambda/user-app-}
+            if echo "$VALID_IDS" | grep -q "^$app_id$"; then
+              echo "OK: $log_group"
+            else
+              echo "ORPHANED: $log_group - Deleting..."
+              aws logs delete-log-group --region $AWS_REGION --log-group-name "$log_group" || echo "  Failed to delete"
+            fi
+          done
+
+      - name: Cleanup orphaned Terraform state files
+        env:
+          VALID_IDS: ${{ steps.db.outputs.valid_ids }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET || 'cloud-deployer-tf-state' }}
+        run: |
+          echo "=== Checking Terraform State Files ==="
+          # List all app-plane state directories
+          STATE_DIRS=$(aws s3 ls s3://${TF_STATE_BUCKET}/app-plane/ 2>/dev/null | awk '{print $2}' | tr -d '/' || echo "")
+
+          for app_id in $STATE_DIRS; do
+            if [ -n "$app_id" ]; then
+              if echo "$VALID_IDS" | grep -q "^$app_id$"; then
+                echo "OK: $app_id"
+              else
+                echo "ORPHANED: $app_id - Deleting state..."
+                aws s3 rm "s3://${TF_STATE_BUCKET}/app-plane/$app_id/" --recursive || echo "  Failed to delete"
+              fi
+            fi
+          done
+
+      - name: Summary
+        run: |
+          echo "=== Cleanup Complete ==="
+          echo "Orphaned resources have been removed."
