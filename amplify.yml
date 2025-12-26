@@ -8,6 +8,14 @@ applications:
             - npm ci
         build:
           commands:
+            # Write env vars to .env.production for NextAuth runtime access
+            # Amplify only injects env vars at build time, not runtime Lambda
+            - echo "AUTH_GITHUB_ID=$AUTH_GITHUB_ID" >> .env.production
+            - echo "AUTH_GITHUB_SECRET=$AUTH_GITHUB_SECRET" >> .env.production
+            - echo "AUTH_SECRET=$AUTH_SECRET" >> .env.production
+            - echo "AUTH_TRUST_HOST=true" >> .env.production
+            - echo "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" >> .env.production
+            - echo "ALLOWED_GITHUB_IDS=$ALLOWED_GITHUB_IDS" >> .env.production
             - npm run build
       artifacts:
         baseDirectory: .next
