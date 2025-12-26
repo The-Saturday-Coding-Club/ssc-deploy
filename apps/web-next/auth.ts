@@ -3,9 +3,6 @@ import GitHub from "next-auth/providers/github"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
-// Force trust host for Amplify deployment
-process.env.AUTH_TRUST_HOST = "true";
-
 // Optional: Restrict access to specific GitHub user IDs
 const ALLOWED_GITHUB_IDS = process.env.ALLOWED_GITHUB_IDS
     ? process.env.ALLOWED_GITHUB_IDS.split(',').map(id => id.trim())
