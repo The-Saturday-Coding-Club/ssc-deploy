@@ -1,0 +1,27 @@
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+env/
+venv/
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfplan
+tfplan
+*.tfvars
+.aws/
+.zip
+node_modules/
+
+# additional - later to delete
+infra/terraform/control-plane/terraform.tfvars
+infra/terraform/control-plane/placeholder.zip
+infra/terraform/control-plane/api.zip

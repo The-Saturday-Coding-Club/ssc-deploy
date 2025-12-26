@@ -1,0 +1,24 @@
+# Control Plane Terraform Variables
+# Copy this file to terraform.tfvars and fill in your values
+# terraform.tfvars is gitignored - NEVER commit real credentials!
+
+# Database connection string (from Neon)
+database_url = "postgresql://user:password@host.neon.tech/neondb?sslmode=require"
+
+# GitHub Personal Access Token (needs repo and workflow permissions)
+github_token = "ghp_your_token_here"
+
+# Secret for deployment callbacks (generate with: openssl rand -hex 32)
+deployment_secret = "your-deployment-secret"
+
+# AES-256 encryption key for user tokens (generate with: openssl rand -hex 32)
+token_encryption_key = "your-64-character-hex-key"
+
+# CORS allowed origins (comma-separated)
+allowed_origins = "http://localhost:3000,https://your-production-domain.com"
+
+# GitHub repository owner (your username or org)
+github_repo_owner = "your-github-username"
+
+# GitHub repository name
+github_repo_name = "Self-Service-Cloud-Deployment"

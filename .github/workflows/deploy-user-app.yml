@@ -1,0 +1,152 @@
+name: Deploy User App
+on:
+  workflow_dispatch:
+    inputs:
+      app_id:
+        description: 'ID of the application'
+        required: true
+      repo_url:
+        description: 'GitHub Repository (Format: owner/repo, e.g. username/my-app)'
+        required: true
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        default: 'main'
+
+      deployment_id:
+        description: 'ID of the deployment record'
+        required: true
+      env_vars:
+        description: 'Environment variables as JSON string'
+        required: false
+        default: '{}'
+      user_repo_token:
+        description: 'GitHub token for accessing user repository'
+        required: false
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Orchestrator Repo
+        uses: actions/checkout@v4
+
+      - name: Checkout User App Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repo_url }}
+          ref: ${{ inputs.branch }}
+          path: user-app
+          token: ${{ inputs.user_repo_token || secrets.USER_REPO_TOKEN }}
+      
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Detect Framework
+        id: buildpack
+        run: |
+          echo "🔍 Detecting framework..."
+          DETECTED=""
+          for buildpack_dir in .github/buildpacks/*/; do
+            buildpack=$(basename "$buildpack_dir")
+            if [ "$buildpack" = "README.md" ]; then
+              continue
+            fi
+            echo "Trying $buildpack..."
+            if bash "$buildpack_dir/detect.sh" user-app; then
+              DETECTED="$buildpack"
+              echo "buildpack=$buildpack" >> $GITHUB_OUTPUT
+              break
+            fi
+          done
+          
+          if [ -z "$DETECTED" ]; then
+            echo "❌ No matching buildpack found!"
+            exit 1
+          fi
+          
+          echo "✅ Selected buildpack: $DETECTED"
+
+      - name: Build Application
+        run: |
+          echo "🏗️ Building with ${{ steps.buildpack.outputs.buildpack }} buildpack..."
+          bash .github/buildpacks/${{ steps.buildpack.outputs.buildpack }}/build.sh user-app
+
+      - name: Inject Runtime Wrapper
+        run: |
+          RUNTIME=.github/buildpacks/${{ steps.buildpack.outputs.buildpack }}/runtime.js
+          if [ -f "$RUNTIME" ]; then
+            echo "📦 Injecting runtime wrapper..."
+            cp "$RUNTIME" user-app/index.js
+            
+            # Add express and serverless-http to package.json if not present
+            cd user-app
+            if ! grep -q "express" package.json 2>/dev/null; then
+              npm install --save express serverless-http
+            fi
+          else
+            echo "ℹ️  No runtime wrapper needed (using existing index.js)"
+          fi
+
+      - name: Zip Application
+        working-directory: user-app
+        run: |
+          zip -r ../app.zip . -x "*.git*" -x "node_modules/.cache/*"
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_DEPLOYER_ROLE_NAME || 'github-actions-deployer' }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infra/terraform/app-plane
+        run: |
+          terraform init \
+            -backend-config="key=app-plane/${{ inputs.app_id }}/terraform.tfstate"
+
+      - name: Prepare Environment Variables
+        run: |
+          # Write env vars to a tfvars file for Terraform
+          echo 'environment_vars = ${{ inputs.env_vars }}' > infra/terraform/app-plane/env.auto.tfvars
+
+      - name: Terraform Apply
+        working-directory: infra/terraform/app-plane
+        env:
+          TF_VAR_app_id: ${{ inputs.app_id }}
+          TF_VAR_lambda_zip_path: ../../../app.zip
+        run: terraform apply -auto-approve
+      
+      - name: Get Deployment URL
+        id: output
+        working-directory: infra/terraform/app-plane
+        run: |
+          echo "url=$(terraform output -raw api_gateway_url)" >> $GITHUB_OUTPUT
+
+      - name: Update deployment status
+        if: always()
+        env:
+          DEPLOYMENT_SECRET: ${{ secrets.DEPLOYMENT_SECRET }}
+          CONTROL_PLANE_API_URL: ${{ vars.CONTROL_PLANE_API_URL }}
+        run: |
+          echo "Reporting status to Control Plane..."
+          STATUS="FAILED"
+          if [ "${{ job.status }}" == "success" ]; then
+            STATUS="SUCCESS"
+          fi
+
+          curl -f -X PATCH \
+            "${CONTROL_PLANE_API_URL}/deployments/${{ inputs.deployment_id }}" \
+            -H "Content-Type: application/json" \
+            -H "X-Deployment-Secret: $DEPLOYMENT_SECRET" \
+            -d "{\"status\": \"$STATUS\", \"url\": \"${{ steps.output.outputs.url }}\"}"
