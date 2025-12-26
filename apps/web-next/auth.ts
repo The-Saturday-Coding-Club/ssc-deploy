@@ -9,6 +9,7 @@ const ALLOWED_GITHUB_IDS = process.env.ALLOWED_GITHUB_IDS
     : null; // null means all users allowed
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+    trustHost: true,
     providers: [
         GitHub({
             clientId: process.env.AUTH_GITHUB_ID,
