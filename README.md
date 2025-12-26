@@ -168,13 +168,57 @@ Visit http://localhost:3000 and sign in with GitHub!
 
 ## Step 8: Deploy to Production (Optional)
 
-### Frontend (Vercel)
+### Option A: AWS Amplify (Recommended)
+
+AWS Amplify provides SSR hosting for Next.js with automatic deployments.
+
+1. **Create Amplify App**
+   - Go to [AWS Amplify Console](https://console.aws.amazon.com/amplify)
+   - Click "Create new app" → "Host web app"
+   - Connect your GitHub repository
+   - Select the branch (e.g., `main`)
+   - Amplify will auto-detect the `amplify.yml` configuration
+
+2. **Set Environment Variables in Amplify Console**
+
+   Go to App settings → Environment variables and add:
+
+   | Variable | Value |
+   |----------|-------|
+   | `AUTH_GITHUB_ID` | Your GitHub OAuth Client ID |
+   | `AUTH_GITHUB_SECRET` | Your GitHub OAuth Client Secret |
+   | `AUTH_SECRET` | Generate with `openssl rand -base64 32` |
+   | `NEXT_PUBLIC_API_URL` | Your Control Plane API Gateway URL |
+   | `ALLOWED_GITHUB_IDS` | (Optional) Comma-separated GitHub user IDs to whitelist |
+
+3. **Create a Production GitHub OAuth App**
+   - Go to [GitHub Developer Settings](https://github.com/settings/developers)
+   - Create a new OAuth App for production
+   - Set callback URL to: `https://YOUR-AMPLIFY-DOMAIN.amplifyapp.com/api/auth/callback/github`
+   - Use these credentials in Amplify environment variables
+
+4. **Update Control Plane CORS**
+
+   Add your Amplify domain to `allowed_origins` in the Control Plane:
+   ```bash
+   cd infra/terraform/control-plane
+   # Edit terraform.tfvars:
+   # allowed_origins = "http://localhost:3000,https://YOUR-AMPLIFY-DOMAIN.amplifyapp.com"
+   terraform apply
+   ```
+
+5. **Deploy**
+   - Push to your branch - Amplify will auto-deploy
+   - Visit your Amplify URL and sign in with GitHub
+
+### Option B: Vercel
+
 1. Connect your fork to [Vercel](https://vercel.com)
 2. Set root directory to `apps/web-next`
 3. Add environment variables from `.env.local`
 4. Update your GitHub OAuth App callback URL
 
-### Update CORS
+### Update CORS (Required for both options)
 Update `allowed_origins` in your control-plane Terraform to include your production domain.
 
 ---
@@ -190,6 +234,14 @@ Update `allowed_origins` in your control-plane Terraform to include your product
 ---
 
 ## Troubleshooting
+
+### Amplify: "Server error" or redirect to localhost on login
+- **Cause**: AWS Amplify only injects environment variables at build time, not at Lambda runtime
+- **Solution**: The `amplify.yml` writes env vars to `.env.production` during build. Ensure all required variables are set in Amplify Console and trigger a new build.
+
+### Amplify: CORS errors when calling API
+- **Cause**: Control Plane API doesn't allow requests from Amplify domain
+- **Solution**: Add your Amplify URL to `allowed_origins` in Control Plane Terraform and run `terraform apply`
 
 ### "Failed to trigger deployment"
 - Check GitHub token has `repo` and `workflow` permissions
