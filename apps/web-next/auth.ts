@@ -3,6 +3,11 @@ import GitHub from "next-auth/providers/github"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+// Optional: Restrict access to specific GitHub user IDs
+const ALLOWED_GITHUB_IDS = process.env.ALLOWED_GITHUB_IDS
+    ? process.env.ALLOWED_GITHUB_IDS.split(',').map(id => id.trim())
+    : null; // null means all users allowed
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
     providers: [
         GitHub({
@@ -12,6 +17,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }),
     ],
     callbacks: {
+        async signIn({ profile }) {
+            // If whitelist is configured, check if user is allowed
+            if (ALLOWED_GITHUB_IDS && ALLOWED_GITHUB_IDS.length > 0) {
+                const githubId = String((profile as any)?.id);
+                if (!ALLOWED_GITHUB_IDS.includes(githubId)) {
+                    console.log(`Access denied for GitHub user ID: ${githubId}`);
+                    return false; // Deny sign-in
+                }
+            }
+            return true; // Allow sign-in
+        },
         async jwt({ token, account, profile }) {
             if (account && profile) {
                 // Use GitHub profile ID explicitly (numeric ID as string)
@@ -19,9 +35,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                 token.sub = githubId;
                 token.accessToken = account.access_token;
 
-                // Store encrypted token on backend (server-side only)
-                try {
-                    const response = await fetch(`${API_URL}/user/token`, {
+                // Store encrypted token on backend (server-side only, non-blocking)
+                // This is fire-and-forget - don't let it block auth
+                if (API_URL && API_URL !== "http://localhost:3001") {
+                    fetch(`${API_URL}/user/token`, {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/json",
@@ -31,12 +48,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                             token: account.access_token,
                             username: (profile as any)?.login || "unknown",
                         }),
-                    });
-                    if (!response.ok) {
-                        console.error("Failed to store token on backend:", response.status, await response.text());
-                    }
-                } catch (e) {
-                    console.error("Failed to store token on backend:", e);
+                    }).catch(e => console.error("Failed to store token on backend:", e));
                 }
             }
             return token;
